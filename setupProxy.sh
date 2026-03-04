@@ -2,7 +2,6 @@
 
 ############################################################################################################
 # User Variables
-# If you want to use username and pass add this to proxy e.g. proxy="username:password@mydomain.com:8080"
 ############################################################################################################
 proxy="mydomain.com:8080"
 noproxyList="127.0.0.0/8, localhost, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, *.mydomain.com"
@@ -96,7 +95,7 @@ removeProxySection() {
     local end_marker="# setupProxy - end"
 
     if [ ! -f "$file" ]; then
-        danger "[ERROR] File $file does not exist"
+        warning "⚠️  File $file does not exist, skipping."
         return
     fi
 
@@ -146,6 +145,11 @@ shouldRun() {
     return 1
 }
 
+# Usuwa CIDR i wildcard z listy no_proxy dla Dockera
+dockerSafeNoProxy() {
+    echo "$noproxyList" | tr ',' '\n' | grep -vE '(/[0-9]+|\*)' | tr '\n' ',' | sed 's/,$//'
+}
+
 ############################################################################################################
 # Proxy Logic
 ############################################################################################################
@@ -160,9 +164,9 @@ enableProxy() {
     export rsync_proxy="http://$proxy"
     export no_proxy="$noproxyList"
 
-    if echo "$noproxyList" | grep -Eq '(\*|/[0-9]+)'; then
-        warning "⚠️  Docker may not support wildcards or CIDR in NO_PROXY."
-    fi
+    local dockerNoProxy
+    dockerNoProxy=$(dockerSafeNoProxy)
+    warning "⚠️  Docker NO_PROXY: CIDR i wildcard usunięte, użyto: $dockerNoProxy"
 
     local blockEnv=$(cat <<EOF
 # setupProxy - start
@@ -191,7 +195,7 @@ EOF
 # setupProxy - start
 Environment="HTTP_PROXY=http://$proxy"
 Environment="HTTPS_PROXY=http://$proxy"
-Environment="NO_PROXY=$noproxyList"
+Environment="NO_PROXY=$dockerNoProxy"
 # setupProxy - end
 EOF
 )
@@ -253,7 +257,7 @@ disableProxy() {
     shouldRun "apt"    && removeProxySection "/etc/apt/apt.conf.d/98proxy.conf"
     shouldRun "docker" && removeProxySection "/etc/systemd/system/docker.service.d/proxy.conf"
     shouldRun "bashrc" && removeProxySection "$HOME/.bashrc"
-    shouldRun "zshrc"  && sremoveProxySection "$HOME/.zshrc"
+    shouldRun "zshrc"  && removeProxySection "$HOME/.zshrc"
     shouldRun "npmrc"  && removeProxySection "$HOME/.npmrc"
     shouldRun "wgetrc" && removeProxySection "$HOME/.wgetrc"
     shouldRun "curlrc" && removeProxySection "$HOME/.curlrc"
@@ -299,7 +303,7 @@ case "$1" in
         ONLY_COMPONENTS=()
 
         for comp in "${entered_components[@]}"; do
-            comp_trimmed="$(echo "$comp" | xargs)"  # Trim whitespace
+            comp_trimmed="$(echo "$comp" | xargs)"
             if [[ " ${valid_components[*]} " =~ " $comp_trimmed " ]]; then
                 ONLY_COMPONENTS+=("$comp_trimmed")
             else
